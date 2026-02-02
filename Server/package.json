@@ -1,0 +1,29 @@
+{
+  "name": "testagent-mcp-server",
+  "version": "1.0.0",
+  "description": "TestAgent MCP Server - 提供浏览器自动化与自定义工具",
+  "type": "module",
+  "bin": {
+    "testagent-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "playwright": "playwright-mcp --browser chromium",
+    "playwright:headless": "playwright-mcp --browser chromium --headless",
+    "inspect": "npx @modelcontextprotocol/inspector tsx src/index.ts",
+    "inspect:playwright": "npx @modelcontextprotocol/inspector playwright-mcp",
+    "install:browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "@playwright/mcp": "^0.0.62",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
