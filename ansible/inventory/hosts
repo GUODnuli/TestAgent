@@ -1,0 +1,20 @@
+# TestAgent 部署目标
+# 格式: <hostname> ansible_host=<ip> ansible_user=<user> [其他变量]
+
+[k8s_masters]
+# k8s-master-1 ansible_host=10.0.1.10 ansible_user=ubuntu
+
+[k8s_workers]
+# k8s-worker-1 ansible_host=10.0.1.20 ansible_user=ubuntu
+# k8s-worker-2 ansible_host=10.0.1.21 ansible_user=ubuntu
+
+[k8s_nodes:children]
+k8s_masters
+k8s_workers
+
+[ci_server]
+# jenkins ansible_host=10.0.1.5 ansible_user=ubuntu
+
+# 本地部署（使用 kubectl 直接连接当前环境的集群）
+[local]
+localhost ansible_connection=local

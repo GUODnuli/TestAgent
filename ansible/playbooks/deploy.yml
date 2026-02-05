@@ -1,0 +1,102 @@
+---
+- name: Deploy TestAgent to Kubernetes
+  hosts: local
+  gather_facts: no
+  vars_prompt:
+    - name: deploy_version
+      prompt: "Enter version to deploy (latest/v1.0.0/etc)"
+      default: "latest"
+      private: no
+    
+    - name: confirm_deploy
+      prompt: "Confirm deployment to {{ deploy_environment }}? (yes/no)"
+      default: "no"
+      private: no
+
+  pre_tasks:
+    - name: Check confirmation
+      fail:
+        msg: "Deployment cancelled"
+      when: confirm_deploy != "yes"
+
+  tasks:
+    - name: Display deployment info
+      debug:
+        msg: |
+          Deploying TestAgent:
+            - Environment: {{ deploy_environment }}
+            - Version: {{ deploy_version }}
+            - Namespace: {{ helm_namespace }}
+            - Frontend Domain: {{ domain_frontend }}
+            - API Domain: {{ domain_api }}
+
+    # ==================== 前置检查 ====================
+    - name: Check kubectl connection
+      command: kubectl cluster-info
+      register: k8s_check
+      failed_when: k8s_check.rc != 0
+
+    - name: Check Helm is installed
+      command: helm version
+      register: helm_check
+      failed_when: helm_check.rc != 0
+
+    - name: Create namespace if not exists
+      command: kubectl create namespace {{ helm_namespace }}
+      ignore_errors: yes
+
+    # ==================== 准备 values 文件 ====================
+    - name: Generate Helm values file
+      template:
+        src: ../templates/values-{{ deploy_environment }}.yml.j2
+        dest: /tmp/testagent-values.yml
+      vars:
+        image_tag: "{{ deploy_version }}"
+
+    # ==================== Helm 部署 ====================
+    - name: Deploy/Upgrade TestAgent with Helm
+      command: >
+        helm upgrade --install {{ helm_release_name }} {{ helm_chart_path }}
+        --namespace {{ helm_namespace }}
+        --values /tmp/testagent-values.yml
+        --set frontend.image.tag={{ deploy_version }}
+        --set server.image.tag={{ deploy_version }}
+        --wait
+        --timeout 600s
+      register: helm_result
+
+    - name: Display deployment result
+      debug:
+        var: helm_result.stdout_lines
+
+    # ==================== 验证部署 ====================
+    - name: Wait for deployment to be ready
+      shell: |
+        kubectl wait --for=condition=available \
+          deployment/{{ helm_release_name }}-server \
+          --namespace {{ helm_namespace }} \
+          --timeout=300s
+      register: wait_result
+      ignore_errors: yes
+
+    - name: Get deployment status
+      command: kubectl get all -n {{ helm_namespace }}
+      register: status_result
+
+    - name: Display status
+      debug:
+        var: status_result.stdout_lines
+
+    - name: Get ingress status
+      command: kubectl get ingress -n {{ helm_namespace }}
+      register: ingress_result
+
+    - name: Display ingress
+      debug:
+        var: ingress_result.stdout_lines
+
+  post_tasks:
+    - name: Cleanup temporary files
+      file:
+        path: /tmp/testagent-values.yml
+        state: absent

@@ -1,0 +1,144 @@
+# 生产环境 Helm Values (由 Ansible 生成)
+
+environment: {{ deploy_environment }}
+
+{% if docker_registry %}
+global:
+  imageRegistry: {{ docker_registry }}
+{% endif %}
+
+# =============================================================================
+# 前端配置
+# =============================================================================
+frontend:
+  replicaCount: {{ frontend_replicas | default(3) }}
+  
+  image:
+    repository: testagent-frontend
+    tag: "{{ image_tag }}"
+    pullPolicy: IfNotPresent
+
+  {% if frontend_resources is defined %}
+  resources:
+    {{ frontend_resources | to_nice_yaml | indent(4) }}
+  {% endif %}
+
+  autoscaling:
+    enabled: {{ autoscaling_enabled | default(true) | lower }}
+    minReplicas: {{ frontend_min_replicas | default(3) }}
+    maxReplicas: {{ frontend_max_replicas | default(10) }}
+    targetCPUUtilizationPercentage: 70
+
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      {% if tls_enabled %}
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      {% endif %}
+    hosts:
+      - host: {{ domain_frontend }}
+        paths:
+          - path: /
+            pathType: Prefix
+    {% if tls_enabled %}
+    tls:
+      - secretName: testagent-tls
+        hosts:
+          - {{ domain_frontend }}
+    {% endif %}
+
+# =============================================================================
+# 后端配置
+# =============================================================================
+server:
+  replicaCount: {{ server_replicas | default(5) }}
+  
+  image:
+    repository: testagent-server
+    tag: "{{ image_tag }}"
+    pullPolicy: IfNotPresent
+
+  {% if server_resources is defined %}
+  resources:
+    {{ server_resources | to_nice_yaml | indent(4) }}
+  {% endif %}
+
+  autoscaling:
+    enabled: {{ autoscaling_enabled | default(true) | lower }}
+    minReplicas: {{ server_min_replicas | default(5) }}
+    maxReplicas: {{ server_max_replicas | default(20) }}
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: 100m
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+      {% if tls_enabled %}
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      {% endif %}
+    hosts:
+      - host: {{ domain_api }}
+        paths:
+          - path: /
+            pathType: Prefix
+    {% if tls_enabled %}
+    tls:
+      - secretName: testagent-api-tls
+        hosts:
+          - {{ domain_api }}
+    {% endif %}
+
+  secrets:
+    jwtSecret: "{{ jwt_secret }}"
+    {% if encryption_key %}encryptionKey: "{{ encryption_key }}"{% endif %}
+
+# =============================================================================
+# 数据库配置
+# =============================================================================
+postgresql:
+  enabled: {{ not use_external_db | lower }}
+  
+  {% if use_external_db %}
+  external:
+    enabled: true
+    host: {{ db_host }}
+    port: {{ db_port }}
+    database: {{ db_name }}
+    username: {{ db_user }}
+    password: {{ db_password }}
+  {% else %}
+  auth:
+    username: {{ db_user }}
+    password: {{ db_password | default('mcp_password') }}
+    database: {{ db_name }}
+  {% endif %}
+
+# =============================================================================
+# Redis 配置
+# =============================================================================
+redis:
+  enabled: {{ not use_external_redis | lower }}
+  
+  {% if use_external_redis %}
+  external:
+    enabled: true
+    host: {{ redis_host }}
+    port: {{ redis_port }}
+  {% endif %}
+
+# =============================================================================
+# 持久化存储
+# =============================================================================
+persistence:
+  uploads:
+    enabled: true
+    size: 20Gi
+    accessMode: ReadWriteMany
+    {% if storage_class %}storageClass: {{ storage_class }}{% endif %}

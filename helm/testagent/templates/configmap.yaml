@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "testagent.fullname" . }}-config
+  labels:
+    {{- include "testagent.labels" . | nindent 4 }}
+data:
+  NODE_ENV: {{ .Values.server.config.nodeEnv | quote }}
+  PORT: "3000"
+  LOG_LEVEL: {{ .Values.server.config.logLevel | quote }}
+  MAX_FILE_SIZE: {{ .Values.server.config.maxFileSize | quote }}
+  CORS_ORIGIN: {{ .Values.server.config.corsOrigin | quote }}
+  ENVIRONMENT: {{ .Values.environment | quote }}

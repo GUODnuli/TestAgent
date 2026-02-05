@@ -1,0 +1,356 @@
+pipeline {
+    agent any
+
+    environment {
+        // 镜像仓库配置
+        DOCKER_REGISTRY = credentials('docker-registry-url')
+        DOCKER_CREDENTIALS = credentials('docker-registry-credentials')
+        
+        // Kubernetes 配置
+        KUBE_CONFIG = credentials('kubeconfig')
+        
+        // 应用配置
+        APP_NAME = 'testagent'
+        HELM_NAMESPACE = 'testagent'
+        
+        // 版本号 (Git commit hash 或 tag)
+        VERSION = sh(
+            script: 'git describe --tags --always --dirty || echo "latest"',
+            returnStdout: true
+        ).trim()
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    stages {
+        // ==================== 阶段 1: 代码检出 ====================
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'echo "Building version: ${VERSION}"'
+            }
+        }
+
+        // ==================== 阶段 2: 代码质量检查 ====================
+        stage('Code Quality') {
+            parallel {
+                stage('Lint Frontend') {
+                    steps {
+                        dir('Client/frontend') {
+                            sh 'npm ci'
+                            sh 'npm run lint || true'
+                        }
+                    }
+                }
+                stage('Lint Server') {
+                    steps {
+                        dir('Client/server') {
+                            sh 'npm ci'
+                            sh 'npm run lint || true'
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==================== 阶段 3: 单元测试 ====================
+        stage('Unit Tests') {
+            parallel {
+                stage('Test Frontend') {
+                    steps {
+                        dir('Client/frontend') {
+                            sh 'npm test -- --coverage --watchAll=false || true'
+                        }
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                allowMissing: true,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'Client/frontend/coverage',
+                                reportFiles: 'index.html',
+                                reportName: 'Frontend Coverage'
+                            ])
+                        }
+                    }
+                }
+                stage('Test Server') {
+                    steps {
+                        dir('Client/server') {
+                            sh 'npm test -- --coverage || true'
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==================== 阶段 4: 构建镜像 ====================
+        stage('Build Images') {
+            parallel {
+                stage('Build Frontend') {
+                    steps {
+                        script {
+                            def image = docker.build(
+                                "${DOCKER_REGISTRY}/${APP_NAME}-frontend:${VERSION}",
+                                "-f k8s/frontend-Dockerfile Client"
+                            )
+                        }
+                    }
+                }
+                stage('Build Server') {
+                    steps {
+                        dir('Client/server') {
+                            sh 'npm ci'
+                            sh 'npm run build'
+                        }
+                        script {
+                            def image = docker.build(
+                                "${DOCKER_REGISTRY}/${APP_NAME}-server:${VERSION}",
+                                "-f k8s/server-Dockerfile Client"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==================== 阶段 5: 推送镜像 ====================
+        stage('Push Images') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                    tag '*'
+                }
+            }
+            steps {
+                script {
+                    docker.withRegistry("https://${DOCKER_REGISTRY}", DOCKER_CREDENTIALS) {
+                        sh """
+                            docker push ${DOCKER_REGISTRY}/${APP_NAME}-frontend:${VERSION}
+                            docker push ${DOCKER_REGISTRY}/${APP_NAME}-server:${VERSION}
+                            
+                            # 同时更新 latest 标签
+                            docker tag ${DOCKER_REGISTRY}/${APP_NAME}-frontend:${VERSION} ${DOCKER_REGISTRY}/${APP_NAME}-frontend:latest
+                            docker tag ${DOCKER_REGISTRY}/${APP_NAME}-server:${VERSION} ${DOCKER_REGISTRY}/${APP_NAME}-server:latest
+                            docker push ${DOCKER_REGISTRY}/${APP_NAME}-frontend:latest
+                            docker push ${DOCKER_REGISTRY}/${APP_NAME}-server:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        // ==================== 阶段 6: 安全扫描 ====================
+        stage('Security Scan') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    // Trivy 镜像扫描
+                    sh """
+                        trivy image --exit-code 0 --severity HIGH,CRITICAL \
+                            ${DOCKER_REGISTRY}/${APP_NAME}-frontend:${VERSION} || true
+                        
+                        trivy image --exit-code 0 --severity HIGH,CRITICAL \
+                            ${DOCKER_REGISTRY}/${APP_NAME}-server:${VERSION} || true
+                    """
+                }
+            }
+        }
+
+        // ==================== 阶段 7: 部署到开发环境 ====================
+        stage('Deploy to Dev') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    deployWithHelm('dev', HELM_NAMESPACE)
+                }
+            }
+        }
+
+        // ==================== 阶段 8: 部署到测试环境 ====================
+        stage('Deploy to Staging') {
+            when {
+                branch 'release/*'
+            }
+            steps {
+                script {
+                    deployWithHelm('staging', HELM_NAMESPACE)
+                }
+            }
+        }
+
+        // ==================== 阶段 9: 生产部署审批 ====================
+        stage('Production Approval') {
+            when {
+                anyOf {
+                    branch 'main'
+                    tag '*'
+                }
+            }
+            steps {
+                script {
+                    def userInput = input(
+                        id: 'DeployToProd',
+                        message: 'Deploy to Production?',
+                        parameters: [
+                            choice(
+                                name: 'DEPLOY_ENV',
+                                choices: ['prod', 'skip'],
+                                description: 'Select deployment environment'
+                            )
+                        ]
+                    )
+                    env.DEPLOY_ENV = userInput
+                }
+            }
+        }
+
+        // ==================== 阶段 10: 部署到生产环境 ====================
+        stage('Deploy to Production') {
+            when {
+                allOf {
+                    anyOf {
+                        branch 'main'
+                        tag '*'
+                    }
+                    environment name: 'DEPLOY_ENV', value: 'prod'
+                }
+            }
+            steps {
+                script {
+                    deployWithHelm('prod', HELM_NAMESPACE)
+                }
+            }
+        }
+
+        // ==================== 阶段 11: 健康检查 ====================
+        stage('Health Check') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    sh """
+                        # 等待部署就绪
+                        kubectl wait --for=condition=available \
+                            deployment/${APP_NAME}-server \
+                            --namespace ${HELM_NAMESPACE} \
+                            --timeout=300s
+                        
+                        # 健康检查
+                        kubectl run health-check --rm -i --restart=Never \
+                            --image=curlimages/curl:latest \
+                            -- curl -sf http://${APP_NAME}-server:3000/health || exit 1
+                    """
+                }
+            }
+        }
+    }
+
+    // ==================== 事后处理 ====================
+    post {
+        always {
+            // 清理工作区
+            cleanWs()
+            
+            // 发送通知
+            script {
+                def status = currentBuild.currentResult
+                def message = """
+                TestAgent Build ${env.BUILD_NUMBER} - ${status}
+                
+                Version: ${VERSION}
+                Branch: ${env.BRANCH_NAME}
+                Commit: ${env.GIT_COMMIT?.take(7)}
+                
+                ${status == 'SUCCESS' ? '✅ Deployment successful!' : '❌ Deployment failed!'}
+                """
+                
+                // 发送 Slack/邮件通知
+                // slackSend(color: status == 'SUCCESS' ? 'good' : 'danger', message: message)
+            }
+        }
+        
+        success {
+            echo '✅ Pipeline completed successfully!'
+        }
+        
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+        
+        aborted {
+            echo '⚠️ Pipeline was aborted'
+        }
+    }
+}
+
+// ==================== 共享方法 ====================
+
+def deployWithHelm(String environment, String namespace) {
+    // 设置 kubectl 配置
+    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+        // 安装 Helm 仓库依赖
+        sh """
+            # 添加必要的 Helm 仓库
+            helm repo add bitnami https://charts.bitnami.com/bitnami || true
+            helm repo update
+        """
+        
+        // 准备 values 文件路径
+        def valuesFile = "ansible/templates/values-${environment}.yml"
+        if (!fileExists(valuesFile)) {
+            valuesFile = "helm/testagent/values.yaml"
+        }
+        
+        // Helm 部署
+        sh """
+            helm upgrade --install ${APP_NAME} helm/testagent \
+                --namespace ${namespace} \
+                --values ${valuesFile} \
+                --set frontend.image.tag=${VERSION} \
+                --set server.image.tag=${VERSION} \
+                --set global.imageRegistry=${DOCKER_REGISTRY} \
+                --wait \
+                --timeout 600s
+            
+            # 验证部署
+            kubectl get all -n ${namespace} -l app.kubernetes.io/name=testagent
+        """
+        
+        // 记录部署信息
+        sh """
+            echo "${VERSION}" > /tmp/${APP_NAME}-last-deploy-${environment}
+            kubectl create configmap ${APP_NAME}-deploy-info \
+                --from-literal=version=${VERSION} \
+                --from-literal=timestamp=\$(date -Iseconds) \
+                --from-literal=build=${env.BUILD_NUMBER} \
+                --namespace ${namespace} \
+                --dry-run=client -o yaml | kubectl apply -f -
+        """
+    }
+}
+
+def fileExists(String filePath) {
+    return sh(
+        script: "test -f ${filePath} && echo 'true' || echo 'false'",
+        returnStdout: true
+    ).trim() == 'true'
+}

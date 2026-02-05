@@ -1,0 +1,39 @@
+---
+# 生产环境变量
+
+deploy_environment: prod
+
+# 生产环境使用更多副本
+frontend_replicas: 3
+server_replicas: 5
+
+# 生产环境必须使用外部数据库和缓存
+use_external_db: true
+use_external_redis: true
+
+# 资源限制更严格
+frontend_resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+server_resources:
+  requests:
+    cpu: 1000m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# 自动扩缩容
+autoscaling_enabled: true
+frontend_min_replicas: 3
+frontend_max_replicas: 10
+server_min_replicas: 5
+server_max_replicas: 20
+
+# TLS 启用
+tls_enabled: true

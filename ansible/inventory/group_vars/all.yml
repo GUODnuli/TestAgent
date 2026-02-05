@@ -1,0 +1,46 @@
+---
+# 全局变量
+
+# 部署环境: dev, staging, prod
+deploy_environment: dev
+
+# 镜像仓库配置
+docker_registry: ""
+docker_registry_username: ""
+docker_registry_password: ""
+
+# Helm 配置
+helm_release_name: testagent
+helm_namespace: testagent
+helm_chart_path: "../../helm/testagent"
+
+# 应用版本
+testagent_version: latest
+
+# 域名配置
+domain_frontend: testagent.local
+domain_api: api.testagent.local
+
+# 是否使用外部数据库
+use_external_db: false
+db_host: ""
+db_port: 5432
+db_name: testagent
+db_user: mcp_user
+db_password: ""
+
+# 是否使用外部 Redis
+use_external_redis: false
+redis_host: ""
+redis_port: 6379
+
+# 密钥（生产环境应从 vault 读取）
+jwt_secret: "change-me-in-production"
+encryption_key: ""
+
+# 存储类
+storage_class: ""
+
+# 资源限制
+frontend_replicas: 2
+server_replicas: 2

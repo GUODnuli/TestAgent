@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testagent-server
+  namespace: testagent
+  labels:
+    app: testagent-server
+spec:
+  replicas: 2  # 根据负载调整
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: testagent-server
+  template:
+    metadata:
+      labels:
+        app: testagent-server
+    spec:
+      initContainers:
+        # 等待数据库就绪
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres 5432; do
+                echo "Waiting for postgres..."
+                sleep 2
+              done
+        # 数据库迁移
+        - name: db-migrate
+          image: testagent-server:latest
+          command: ["npx", "prisma", "migrate", "deploy"]
+          envFrom:
+            - configMapRef:
+                name: testagent-config
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://mcp_user:$(DB_PASSWORD)@postgres:5432/testagent?schema=public"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: testagent-secrets
+                  key: DB_PASSWORD
+      containers:
+        - name: server
+          image: testagent-server:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: testagent-config
+            - secretRef:
+                name: testagent-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://mcp_user:$(DB_PASSWORD)@postgres:5432/testagent?schema=public"
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: uploads-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  namespace: testagent
+spec:
+  accessModes:
+    - ReadWriteMany  # 多个副本共享上传目录
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: efs-sc  # AWS EFS 或其他共享存储
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testagent-server
+  namespace: testagent
+spec:
+  selector:
+    app: testagent-server
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP

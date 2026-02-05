@@ -1,0 +1,211 @@
+# TestAgent Helm Chart 默认配置
+
+# 全局配置
+global:
+  # 镜像仓库前缀
+  imageRegistry: ""
+  # 镜像拉取密钥
+  imagePullSecrets: []
+
+# 部署环境: dev, staging, prod
+environment: dev
+
+# =============================================================================
+# 前端配置
+# =============================================================================
+frontend:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: testagent-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+
+  # Ingress 配置
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    hosts:
+      - host: testagent.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    # tls:
+    #   - secretName: testagent-tls
+    #     hosts:
+    #       - testagent.local
+
+# =============================================================================
+# 后端配置
+# =============================================================================
+server:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: testagent-server
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # Ingress 配置
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: 100m
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    hosts:
+      - host: api.testagent.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  # 应用配置
+  config:
+    nodeEnv: production
+    logLevel: info
+    maxFileSize: 104857600  # 100MB
+    corsOrigin: "*"
+    
+  # 密钥配置 (会被 secret 覆盖)
+  secrets:
+    jwtSecret: "change-me-in-production"
+    encryptionKey: ""
+
+# =============================================================================
+# 数据库配置 (内置 PostgreSQL)
+# =============================================================================
+postgresql:
+  enabled: true
+  
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  
+  auth:
+    username: mcp_user
+    password: mcp_password
+    database: testagent
+  
+  persistence:
+    enabled: true
+    size: 10Gi
+    # storageClass: standard
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  # 使用外部数据库时配置
+  external:
+    enabled: false
+    host: ""
+    port: 5432
+    database: ""
+    username: ""
+    password: ""
+
+# =============================================================================
+# Redis 配置 (内置 Redis)
+# =============================================================================
+redis:
+  enabled: true
+  
+  image:
+    repository: redis
+    tag: "7-alpine"
+  
+  persistence:
+    enabled: true
+    size: 5Gi
+  
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # 使用外部 Redis 时配置
+  external:
+    enabled: false
+    host: ""
+    port: 6379
+    password: ""
+
+# =============================================================================
+# 持久化存储配置
+# =============================================================================
+persistence:
+  uploads:
+    enabled: true
+    size: 10Gi
+    accessMode: ReadWriteMany
+    # storageClass: efs-sc  # AWS EFS
+
+# =============================================================================
+# 监控配置
+# =============================================================================
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# =============================================================================
+# 网络策略
+# =============================================================================
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []

@@ -1,0 +1,38 @@
+# TestAgent Server Dockerfile
+
+FROM node:20-alpine
+
+# 安装必要的系统依赖
+RUN apk add --no-cache python3 make g++ \
+    && npm install -g prisma
+
+WORKDIR /app
+
+# 先复制 package 文件，利用 Docker 缓存层
+COPY Client/server/package*.json ./
+COPY Client/server/prisma ./prisma/
+
+# 安装依赖
+RUN npm ci --only=production \
+    && prisma generate
+
+# 复制源码
+COPY Client/server/dist ./dist/
+COPY Client/server/scripts ./scripts/
+
+# 创建非 root 用户
+RUN addgroup -g 1001 -S nodejs \
+    && adduser -S nodejs -u 1001
+
+# 设置权限
+RUN chown -R nodejs:nodejs /app
+USER nodejs
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+
+EXPOSE 3000
+
+# 启动命令
+CMD ["node", "dist/index.js"]

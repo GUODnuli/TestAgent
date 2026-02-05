@@ -1,0 +1,29 @@
+apiVersion: v2
+name: testagent
+description: TestAgent - AI Testing Platform
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+
+keywords:
+  - testing
+  - ai
+  - agent
+  - automation
+
+maintainers:
+  - name: TestAgent Team
+    email: team@testagent.com
+
+# 可选：依赖的 subcharts
+dependencies:
+  # 如果使用外部 PostgreSQL chart，取消注释
+  # - name: postgresql
+  #   version: 13.2.0
+  #   repository: https://charts.bitnami.com/bitnami
+  #   condition: postgresql.enabled
+  
+  # - name: redis
+  #   version: 18.5.0
+  #   repository: https://charts.bitnami.com/bitnami
+  #   condition: redis.enabled

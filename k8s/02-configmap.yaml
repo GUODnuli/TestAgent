@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testagent-config
+  namespace: testagent
+data:
+  # 服务器配置
+  NODE_ENV: "production"
+  PORT: "3000"
+  
+  # 数据库配置 (使用 RDS/云数据库时修改)
+  DATABASE_URL: "postgresql://mcp_user:mcp_password@postgres:5432/testagent?schema=public"
+  
+  # Redis 配置
+  REDIS_URL: "redis://redis:6379"
+  
+  # JWT 配置
+  JWT_SECRET: "your-jwt-secret-change-in-production"
+  JWT_EXPIRES_IN: "7d"
+  
+  # CORS 配置
+  CORS_ORIGIN: "*"
+  
+  # 日志级别
+  LOG_LEVEL: "info"
+  
+  # Agent 配置
+  AGENT_MODE: "coordinator"
+  MAX_WORKERS: "5"
+  
+  # 文件上传限制
+  MAX_FILE_SIZE: "104857600"  # 100MB
+  UPLOAD_DIR: "/app/uploads"
