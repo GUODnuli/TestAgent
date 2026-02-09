@@ -1,10 +1,11 @@
 # TestAgent Server Dockerfile
+# 多阶段构建：先编译 TypeScript，再构建生产镜像
+# 使用 Alpine 镜像，排除不兼容 musl 的 ML 重依赖
 
-FROM node:20-alpine
+# 阶段1: 构建 Node.js
+FROM node:20-alpine AS builder
 
-# 安装必要的系统依赖
-RUN apk add --no-cache python3 make g++ \
-    && npm install -g prisma
+RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
@@ -12,27 +13,59 @@ WORKDIR /app
 COPY Client/server/package*.json ./
 COPY Client/server/prisma ./prisma/
 
-# 安装依赖
-RUN npm ci --only=production \
-    && prisma generate
+# 安装所有依赖（包含 devDependencies 用于编译）
+RUN npm ci && npx prisma generate
 
-# 复制源码
-COPY Client/server/dist ./dist/
+# 复制源码并编译
+COPY Client/server/tsconfig.json ./
+COPY Client/server/src ./src/
+RUN npm run build
+
+# 阶段2: 生产镜像
+FROM node:20-alpine
+
+RUN apk add --no-cache python3 py3-pip make g++ bash curl
+
+WORKDIR /app
+
+COPY Client/server/package*.json ./
+COPY Client/server/prisma ./prisma/
+
+# 仅安装生产依赖
+RUN npm ci --omit=dev && npx prisma generate
+
+# 从构建阶段复制编译产物
+COPY --from=builder /app/dist ./dist/
 COPY Client/server/scripts ./scripts/
+
+# 复制 Python Agent 代码和依赖
+COPY Client/agent /app/agent/
+COPY Client/prompts /app/prompts/
+COPY Client/.testagent /app/.testagent/
+COPY Client/requirements.txt /app/requirements.txt
+
+# 安装 Python 依赖，排除 Alpine 不兼容的 ML 包（chromadb/onnxruntime/sentence-transformers）
+# 这些是向量记忆系统，API 接口测试核心功能不依赖
+RUN pip3 install --no-cache-dir --break-system-packages \
+    agentscope json5 requests rank-bm25 toml loguru pydantic \
+    httpx jsonpath-ng pyyaml jsonschema python-docx jinja2 \
+    python-dotenv rich anyio "python-socketio[asyncio_client]"
 
 # 创建非 root 用户
 RUN addgroup -g 1001 -S nodejs \
     && adduser -S nodejs -u 1001
 
-# 设置权限
-RUN chown -R nodejs:nodejs /app
+# 创建运行时目录并设置权限
+RUN mkdir -p /app/storage/memory /app/storage/chat /app/storage/cache \
+             /app/uploads /app/logs \
+    && chown -R nodejs:nodejs /app
 USER nodejs
 
-# 健康检查
+# 健康检查（默认端口 8000）
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8000/health || exit 1
 
-EXPOSE 3000
+EXPOSE 8000
 
 # 启动命令
 CMD ["node", "dist/index.js"]
