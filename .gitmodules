@@ -1,3 +1,3 @@
 [submodule "Client"]
 	path = Client
-	url = https://github.com/GUODnuli/mcp-autotest.git
+	url = git@github.com:GUODnuli/TestAgentClient.git
