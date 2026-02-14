@@ -26,6 +26,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-dashscope}
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-qwen3-max-preview}
       LLM_API_KEY: ${LLM_API_KEY}
+      CODE_INDEX_SERVICE_URL: http://code-index-service:8080
     volumes:
       - uploads_data:/app/uploads
       - /home/zhuangxiaosen/projects/MockProject:/workspace/MockProject:ro
@@ -38,6 +39,30 @@ services:
     networks:
       - testagent-network
       - client_default
+
+  # Code Index Service (FastAPI + tree-sitter)
+  code-index-service:
+    build:
+      context: .
+      dockerfile: k8s/code-index-Dockerfile
+    container_name: testagent-code-index
+    restart: unless-stopped
+    ports:
+      - "40001:8080"
+    environment:
+      STORAGE_PATH: /data
+      WORKSPACE_ROOT: /workspace
+    volumes:
+      - code_index_data:/data
+      - /home/zhuangxiaosen/projects/MockProject:/workspace/MockProject:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - testagent-network
 
   # TestAgent Frontend (Vue + Nginx)
   frontend:
@@ -56,6 +81,8 @@ services:
 
 volumes:
   uploads_data:
+    driver: local
+  code_index_data:
     driver: local
 
 networks:
